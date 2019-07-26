@@ -6990,6 +6990,10 @@ void ixgbe_update_stats(struct ixgbe_adapter *adapter)
 	netdev->stats.rx_length_errors = hwstats->rlec;
 	netdev->stats.rx_crc_errors = hwstats->crcerrs;
 	netdev->stats.rx_missed_errors = total_mpc;
+
+	for (i = 0; i < adapter->num_vfs; i ++) {
+		ixgbe_update_vf_stats(adapter, i);
+	}
 }
 
 /**
@@ -10045,6 +10049,7 @@ static const struct net_device_ops ixgbe_netdev_ops = {
 	.ndo_set_vf_rss_query_en = ixgbe_ndo_set_vf_rss_query_en,
 	.ndo_set_vf_trust	= ixgbe_ndo_set_vf_trust,
 	.ndo_get_vf_config	= ixgbe_ndo_get_vf_config,
+	.ndo_get_vf_stats	= ixgbe_ndo_get_vf_stats,	
 	.ndo_get_stats64	= ixgbe_get_stats64,
 	.ndo_setup_tc		= __ixgbe_setup_tc,
 #ifdef CONFIG_NET_POLL_CONTROLLER
@@ -10317,6 +10322,8 @@ static int ixgbe_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 		err = -EIO;
 		goto err_ioremap;
 	}
+	adapter->vf_io_addr = ioremap(pci_resource_start(pdev, PCI_IOV_RESOURCES),
+			      pci_resource_len(pdev, PCI_IOV_RESOURCES));
 
 	netdev->netdev_ops = &ixgbe_netdev_ops;
 	ixgbe_set_ethtool_ops(netdev);
@@ -10629,6 +10636,9 @@ skip_sriov:
 	/* carrier off reporting is important to ethtool even BEFORE open */
 	netif_carrier_off(netdev);
 
+
+
+
 #ifdef CONFIG_IXGBE_DCA
 	if (dca_add_requester(&pdev->dev) == 0) {
 		adapter->flags |= IXGBE_FLAG_DCA_ENABLED;
@@ -10751,6 +10761,7 @@ static void ixgbe_remove(struct pci_dev *pdev)
 
 #endif
 	iounmap(adapter->io_addr);
+	iounmap(adapter->vf_io_addr);
 	pci_release_mem_regions(pdev);
 
 	e_dev_info("complete\n");

@@ -31,6 +31,10 @@ int ixgbe_ndo_set_vf_rss_query_en(struct net_device *netdev, int vf,
 int ixgbe_ndo_set_vf_trust(struct net_device *netdev, int vf, bool setting);
 int ixgbe_ndo_get_vf_config(struct net_device *netdev,
 			    int vf, struct ifla_vf_info *ivi);
+int ixgbe_ndo_get_vf_stats(struct net_device *netdev, int vf,
+			 struct ifla_vf_stats *vf_stats);
+void ixgbe_update_vf_stats(struct ixgbe_adapter *adapter, int vf);
+
 void ixgbe_check_vf_rate_limit(struct ixgbe_adapter *adapter);
 int ixgbe_disable_sriov(struct ixgbe_adapter *adapter);
 #ifdef CONFIG_PCI_IOV

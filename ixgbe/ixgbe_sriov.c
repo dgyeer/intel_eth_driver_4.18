@@ -142,6 +142,8 @@ static void ixgbe_get_vfs(struct ixgbe_adapter *adapter)
 	}
 }
 
+void ixgbe_init_last_vf_counter_stats(struct ixgbe_adapter *adapter);
+
 /* Note this function is called when the user wants to enable SR-IOV
  * VFs using the now deprecated module parameter
  */
@@ -184,6 +186,7 @@ void ixgbe_enable_sriov(struct ixgbe_adapter *adapter, unsigned int max_vfs)
 
 	if (!__ixgbe_enable_sriov(adapter, num_vfs)) {
 		ixgbe_get_vfs(adapter);
+//		ixgbe_init_last_vf_counter_stats(adapter);
 		return;
 	}
 
@@ -1686,3 +1689,81 @@ int ixgbe_ndo_get_vf_config(struct net_device *netdev,
 	ivi->trusted = adapter->vfinfo[vf].trusted;
 	return 0;
 }
+
+#define UPDATE_VF_COUNTER_32bit(reg, last_counter, counter)	\
+	{							\
+		u32 current_counter = readl(&adapter->vf_io_addr[reg]);	\
+		if (current_counter < last_counter) 	\
+			counter += 0x100000000LL;		\
+		last_counter = current_counter; 		\
+		counter &= 0xFFFFFFFF00000000LL;		\
+		counter |= current_counter; 		\
+	}
+				
+#define UPDATE_VF_COUNTER_36bit(reg_lsb, reg_msb, last_counter, counter) \
+	{								 \
+		u64 current_counter_lsb = readl(&adapter->vf_io_addr[reg_lsb]);	 \
+		u64 current_counter_msb = readl(&adapter->vf_io_addr[reg_msb]);	 \
+		u64 current_counter = (current_counter_msb << 32) |  \
+			current_counter_lsb;				 \
+		if (current_counter < last_counter) 		 \
+			counter += 0x1000000000LL;			 \
+		last_counter = current_counter; 			 \
+		counter &= 0xFFFFFFF000000000LL;			 \
+		counter |= current_counter; 			 \
+	}
+
+
+void ixgbe_update_vf_stats(struct ixgbe_adapter *adapter, int vf)
+{
+	UPDATE_VF_COUNTER_32bit(IXGBE_VFGPRC + vf * 0x4000, adapter->vfinfo[vf].last_vfgprc,
+				adapter->vfinfo[vf].vfgprc);
+	UPDATE_VF_COUNTER_32bit(IXGBE_VFGPTC + vf * 0x4000, adapter->vfinfo[vf].last_vfgptc,
+				adapter->vfinfo[vf].vfgptc);
+	UPDATE_VF_COUNTER_36bit(IXGBE_VFGORC_LSB + vf * 0x4000, IXGBE_VFGORC_MSB + vf * 0x4000,
+				adapter->vfinfo[vf].last_vfgorc,
+				adapter->vfinfo[vf].vfgorc);
+	UPDATE_VF_COUNTER_36bit(IXGBE_VFGOTC_LSB + vf * 0x4000, IXGBE_VFGOTC_MSB + vf * 0x4000,
+				adapter->vfinfo[vf].last_vfgotc,
+				adapter->vfinfo[vf].vfgotc);
+	UPDATE_VF_COUNTER_32bit(IXGBE_VFMPRC + vf * 0x4000, adapter->vfinfo[vf].last_vfmprc,
+				adapter->vfinfo[vf].vfmprc);
+	return;
+}
+
+void ixgbe_init_last_vf_counter_stats(struct ixgbe_adapter *adapter)
+{
+	int vf;
+	
+	for (vf = 0; vf < adapter->num_vfs; vf ++) {
+		adapter->vfinfo[vf].last_vfgprc = readl(&adapter->vf_io_addr[IXGBE_VFGPRC + vf * 0x4000]);
+		adapter->vfinfo[vf].last_vfgorc = readl(&adapter->vf_io_addr[IXGBE_VFGORC_LSB + vf * 0x4000]);
+		adapter->vfinfo[vf].last_vfgorc |= (((u64)(readl(&adapter->vf_io_addr[IXGBE_VFGORC_MSB]))) << 32);
+		adapter->vfinfo[vf].last_vfgptc = readl(&adapter->vf_io_addr[IXGBE_VFGPTC + vf * 0x4000]);
+		adapter->vfinfo[vf].last_vfgotc = readl(&adapter->vf_io_addr[IXGBE_VFGOTC_LSB + vf * 0x4000]);
+		adapter->vfinfo[vf].last_vfgotc |= (((u64)(readl(&adapter->vf_io_addr[IXGBE_VFGOTC_MSB + vf * 0x4000]))) << 32);
+		adapter->vfinfo[vf].last_vfmprc = readl(&adapter->vf_io_addr[IXGBE_VFMPRC + vf * 0x4000]);
+	}
+}
+
+int ixgbe_ndo_get_vf_stats(struct net_device *netdev, int vf,
+			 struct ifla_vf_stats *vf_stats)
+{
+	struct ixgbe_adapter *adapter = netdev_priv(netdev);
+	if (vf >= adapter->num_vfs)
+		return -EINVAL;
+
+//	ixgbe_update_vf_stats(adapter, vf);
+
+	vf_stats->rx_packets = adapter->vfinfo[vf].vfgprc;
+	vf_stats->tx_packets = adapter->vfinfo[vf].vfgptc;
+	vf_stats->rx_bytes	 = adapter->vfinfo[vf].vfgorc;
+	vf_stats->tx_bytes	 = adapter->vfinfo[vf].vfgotc;
+	vf_stats->broadcast  = 0;
+	vf_stats->multicast  = adapter->vfinfo[vf].vfmprc;;
+	vf_stats->rx_dropped = 0;
+	vf_stats->tx_dropped = 0;
+
+	return 0;
+}
+

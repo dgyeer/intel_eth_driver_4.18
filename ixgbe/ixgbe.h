@@ -169,6 +169,14 @@ enum ixgbe_tx_flags {
 #define IXGBE_82599_VF_DEVICE_ID        0x10ED
 #define IXGBE_X540_VF_DEVICE_ID         0x1515
 
+#define IXGBE_VFGPRC		0x0101C
+#define IXGBE_VFGPTC		0x0201C
+#define IXGBE_VFGORC_LSB	0x01020
+#define IXGBE_VFGORC_MSB	0x01024
+#define IXGBE_VFGOTC_LSB	0x02020
+#define IXGBE_VFGOTC_MSB	0x02024
+#define IXGBE_VFMPRC		0x01034
+
 struct vf_data_storage {
 	struct pci_dev *vfdev;
 	unsigned char vf_mac_addresses[ETH_ALEN];
@@ -184,6 +192,17 @@ struct vf_data_storage {
 	u8 trusted;
 	int xcast_mode;
 	unsigned int vf_api;
+	u64 vfgprc;
+	u64 vfgptc;
+	u64 vfgorc;
+	u64 vfgotc;
+	u64 vfmprc;
+	
+	u64 last_vfgprc;
+	u64 last_vfgptc;
+	u64 last_vfgorc;
+	u64 last_vfgotc;
+	u64 last_vfmprc;
 };
 
 enum ixgbevf_xcast_modes {
@@ -696,6 +715,7 @@ struct ixgbe_adapter {
 	struct ixgbe_fcoe fcoe;
 #endif /* IXGBE_FCOE */
 	u8 __iomem *io_addr; /* Mainly for iounmap use */
+	u8 __iomem *vf_io_addr;
 	u32 wol;
 
 	u16 bridge_mode;
