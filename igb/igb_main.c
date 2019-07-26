@@ -175,6 +175,8 @@ static int igb_ndo_set_vf_trust(struct net_device *netdev, int vf,
 				bool setting);
 static int igb_ndo_get_vf_config(struct net_device *netdev, int vf,
 				 struct ifla_vf_info *ivi);
+static int igb_ndo_get_vf_stats(struct net_device *dev, int vf,
+			 struct ifla_vf_stats *vf_stats);
 static void igb_check_vf_rate_limit(struct igb_adapter *);
 static void igb_nfc_filter_exit(struct igb_adapter *adapter);
 static void igb_nfc_filter_restore(struct igb_adapter *adapter);
@@ -2773,6 +2775,7 @@ static const struct net_device_ops igb_netdev_ops = {
 	.ndo_set_vf_spoofchk	= igb_ndo_set_vf_spoofchk,
 	.ndo_set_vf_trust	= igb_ndo_set_vf_trust,
 	.ndo_get_vf_config	= igb_ndo_get_vf_config,
+	.ndo_get_vf_stats	= igb_ndo_get_vf_stats,
 #ifdef CONFIG_NET_POLL_CONTROLLER
 	.ndo_poll_controller	= igb_netpoll,
 #endif
@@ -2989,6 +2992,8 @@ static int igb_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 		goto err_ioremap;
 	/* hw->hw_addr can be altered, we'll use adapter->io_addr for unmap */
 	hw->hw_addr = adapter->io_addr;
+	
+	adapter->vf_io_addr = pci_iomap(pdev, PCI_IOV_RESOURCES, 0);
 
 	netdev->netdev_ops = &igb_netdev_ops;
 	igb_set_ethtool_ops(netdev);
@@ -3588,6 +3593,7 @@ static void igb_remove(struct pci_dev *pdev)
 	igb_clear_interrupt_scheme(adapter);
 
 	pci_iounmap(pdev, adapter->io_addr);
+	pci_iounmap(pdev, adapter->vf_io_addr);
 	if (hw->flash_address)
 		iounmap(hw->flash_address);
 	pci_release_mem_regions(pdev);
@@ -6165,6 +6171,93 @@ static int igb_change_mtu(struct net_device *netdev, int new_mtu)
 	return 0;
 }
 
+static void igb_update_vf_stats(struct igb_adapter *adapter, int vf)
+{
+	u64 vfgprc, vfgptc, vfgorc, vfgotc, vfmprc;
+	u32 vfgprc_reg, vfgptc_reg, vfgorc_reg, vfgotc_reg, vfmprc_reg;
+	struct e1000_hw *hw = &adapter->hw;
+
+	if (adapter->vf_data[vf].init == false) {
+		if (adapter->vf_data[vf].reset == true) {
+			if (readl(&adapter->vf_io_addr[0x8 + vf * 0x4000]) && E1000_STATUS_LU == 0) {
+				return;
+			}
+			
+			adapter->vf_data[vf].reset = false;
+			adapter->vf_data[vf].init = true;
+		} else {
+			return;
+		}
+	}
+
+	vfgprc_reg = rd32(E1000_I350_VFGPRC + E1000_I350_VFSTRIDE * vf);
+	vfgptc_reg = rd32(E1000_I350_VFGPTC + E1000_I350_VFSTRIDE * vf);
+	vfgorc_reg = rd32(E1000_I350_VFGORC + E1000_I350_VFSTRIDE * vf);
+	vfgotc_reg = rd32(E1000_I350_VFGOTC + E1000_I350_VFSTRIDE * vf);
+	vfmprc_reg = rd32(E1000_I350_VFMPRC + E1000_I350_VFSTRIDE * vf);
+
+//	if (readl(&adapter->vf_io_addr[0x8 + vf * 0x4000]) && E1000_STATUS_LU == 0) {
+		if (vfgorc_reg == 0 && vfgotc_reg == 0) {
+			atomic64_add(adapter->vf_data[vf].vfgorc_last, &adapter->vf_data[vf].vfgorc_reset);
+			atomic64_add(adapter->vf_data[vf].vfgotc_last, &adapter->vf_data[vf].vfgotc_reset);
+			adapter->vf_data[vf].vfgorc_last = 0;
+			adapter->vf_data[vf].vfgotc_last = 0;
+		}
+//	}
+
+//	value = rd32(0x10010 + 0x100 * vf);//readl(&adapter->vf_io_addr[0x0F10 + vf * 0x4000]);
+	vfgprc = atomic64_read(&adapter->vf_data[vf].vfgprc);
+	if (vfgprc_reg < adapter->vf_data[vf].vfgprc_last) {
+		vfgprc += 0x100000000ll;
+	}
+	vfgprc &= 0xffffffff00000000ll;
+	vfgprc |= vfgprc_reg;
+	atomic64_set(&adapter->vf_data[vf].vfgprc, (s64)vfgprc);
+	adapter->vf_data[vf].vfgprc_last = vfgprc_reg;
+
+//	value = rd32(0x10014 + 0x100 * vf);//readl(&adapter->vf_io_addr[0x0F14 + vf * 0x4000]);
+	vfgptc = atomic64_read(&adapter->vf_data[vf].vfgptc);
+	if (vfgptc_reg < adapter->vf_data[vf].vfgptc_last) {
+		vfgptc += 0x100000000ll;
+	}
+	vfgptc &= 0xffffffff00000000ll;
+	vfgptc |= vfgptc_reg;
+	atomic64_set(&adapter->vf_data[vf].vfgptc, (s64)vfgptc);
+	adapter->vf_data[vf].vfgptc_last = vfgptc_reg;
+	
+//	value = rd32(0x10018 + 0x100 * vf);// readl(&adapter->vf_io_addr[0x0F18 + vf * 0x4000]);
+	vfgorc = atomic64_read(&adapter->vf_data[vf].vfgorc);
+	if (vfgorc_reg < adapter->vf_data[vf].vfgorc_last) {
+		vfgorc += 0x100000000ll;
+	}
+	vfgorc &= 0xffffffff00000000ll;
+	vfgorc |= vfgorc_reg;
+	atomic64_set(&adapter->vf_data[vf].vfgorc, (s64)vfgorc);
+	adapter->vf_data[vf].vfgorc_last = vfgorc_reg;
+
+//	value = rd32(0x10034 + 0x100 * vf);//readl(&adapter->vf_io_addr[0x0F34 + vf * 0x4000]);
+	vfgotc = atomic64_read(&adapter->vf_data[vf].vfgotc);
+	if (vfgotc_reg < adapter->vf_data[vf].vfgotc_last) {
+		vfgotc += 0x100000000ll;
+	}
+	vfgotc &= 0xffffffff00000000ll;
+	vfgotc |= vfgotc_reg;
+	atomic64_set(&adapter->vf_data[vf].vfgotc, (s64)vfgotc);
+	adapter->vf_data[vf].vfgotc_last = vfgotc_reg;
+
+//	value = rd32(0x10038 + 0x100 * vf);//readl(&adapter->vf_io_addr[0x0F38 + vf * 0x4000]);
+	vfmprc = atomic64_read(&adapter->vf_data[vf].vfmprc);
+	if (vfmprc_reg < adapter->vf_data[vf].vfmprc_last) {
+		vfmprc += 0x100000000ll;
+	}
+	vfmprc &= 0xffffffff00000000ll;
+	vfmprc |= vfmprc_reg;
+	atomic64_set(&adapter->vf_data[vf].vfmprc, (s64)vfmprc);
+	adapter->vf_data[vf].vfmprc_last = vfmprc_reg;
+
+	return;
+}
+
 /**
  *  igb_update_stats - Update the board statistics counters
  *  @adapter: board private structure
@@ -6352,6 +6445,10 @@ void igb_update_stats(struct igb_adapter *adapter)
 		adapter->stats.o2bspc += rd32(E1000_O2BSPC);
 		adapter->stats.b2ospc += rd32(E1000_B2OSPC);
 		adapter->stats.b2ogprc += rd32(E1000_B2OGPRC);
+	}
+
+	for (i = 0; i < adapter->vfs_allocated_count; i ++) {
+		igb_update_vf_stats(adapter, i);
 	}
 }
 
@@ -7040,6 +7137,8 @@ static void igb_vf_reset_msg(struct igb_adapter *adapter, u32 vf)
 		msgbuf[0] = E1000_VF_RESET | E1000_VT_MSGTYPE_NACK;
 	}
 	igb_write_mbx(hw, msgbuf, 3, vf);
+	adapter->vf_data[vf].reset = true;
+	adapter->vf_data[vf].init = false;
 }
 
 static void igb_flush_mac_table(struct igb_adapter *adapter)
@@ -9277,6 +9376,29 @@ static int igb_ndo_get_vf_config(struct net_device *netdev,
 	ivi->trusted = adapter->vf_data[vf].trusted;
 	return 0;
 }
+				 
+static int igb_ndo_get_vf_stats(struct net_device *netdev, int vf,
+			 struct ifla_vf_stats *vf_stats)
+{
+	struct igb_adapter *adapter = netdev_priv(netdev);
+	if (vf >= adapter->vfs_allocated_count)
+	 	return -EINVAL;
+
+//	igb_update_vf_stats(adapter, vf);
+
+	vf_stats->rx_packets = atomic64_read(&adapter->vf_data[vf].vfgprc);
+	vf_stats->tx_packets = atomic64_read(&adapter->vf_data[vf].vfgptc);
+	vf_stats->rx_bytes   = atomic64_read(&adapter->vf_data[vf].vfgorc)
+		+ atomic64_read(&adapter->vf_data[vf].vfgorc_reset);
+	vf_stats->tx_bytes   = atomic64_read(&adapter->vf_data[vf].vfgotc)
+		+ atomic64_read(&adapter->vf_data[vf].vfgotc_reset);
+	vf_stats->broadcast  = 0;
+	vf_stats->multicast  = atomic64_read(&adapter->vf_data[vf].vfmprc);
+	vf_stats->rx_dropped = 0;
+	vf_stats->tx_dropped = 0;
+
+	return 0;
+}		 
 
 static void igb_vmm_control(struct igb_adapter *adapter)
 {

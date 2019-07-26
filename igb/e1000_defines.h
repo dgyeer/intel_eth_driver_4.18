@@ -1058,4 +1058,12 @@
 /* Transmit Descriptor Control fields */
 #define E1000_TXDCTL_PRIORITY		BIT(27)
 
+
+#define E1000_I350_VFGPRC		0x10010
+#define E1000_I350_VFGPTC		0x10014
+#define E1000_I350_VFGORC		0x10018
+#define E1000_I350_VFGOTC		0x10034
+#define E1000_I350_VFMPRC		0x10038
+#define E1000_I350_VFSTRIDE		0x100
+
 #endif

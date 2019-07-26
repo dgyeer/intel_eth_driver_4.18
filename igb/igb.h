@@ -90,6 +90,22 @@ struct vf_data_storage {
 	u16 tx_rate;
 	bool spoofchk_enabled;
 	bool trusted;
+	bool reset;
+	bool init;
+	atomic64_t vfgprc;
+	atomic64_t vfgptc;
+	atomic64_t vfgorc;
+	atomic64_t vfgotc;
+	atomic64_t vfmprc;
+
+	u32 vfgprc_last;
+	u32 vfgptc_last;
+	u32 vfgorc_last;
+	u32 vfgotc_last;
+	u32 vfmprc_last;
+
+	atomic64_t vfgorc_reset;
+	atomic64_t vfgotc_reset;
 };
 
 /* Number of unicast MAC filters reserved for the PF in the RAR registers */
@@ -503,6 +519,7 @@ struct igb_adapter {
 	u16 link_duplex;
 
 	u8 __iomem *io_addr; /* Mainly for iounmap use */
+	u8 __iomem *vf_io_addr;
 
 	struct work_struct reset_task;
 	struct work_struct watchdog_task;
